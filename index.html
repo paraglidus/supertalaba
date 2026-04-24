@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>O'quv AI Chatbot</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="app-shell">
+        <aside class="panel sidebar">
+            <div class="brand">
+                <div class="brand-mark">AI</div>
+                <div>
+                    <h1>O'quv Bot</h1>
+                    <p>Tarixsiz, tezkor, fanlar bo'yicha aniq javob</p>
+                </div>
+            </div>
+
+            <div class="status" id="statusBox">
+                <span class="status-dot"></span>
+                <span id="statusText">Backend tekshirilmoqda...</span>
+            </div>
+
+            <section class="info-card">
+                <h2>Qisqa tartib</h2>
+                <p>Chat qismida konspekt va savol-javob ishlaydi. Test esa alohida panelda yuradi. Sahifa yangilansa eski yozishmalar ko'rsatilmaydi.</p>
+            </section>
+
+            <div class="subject-list" id="subjectList"></div>
+        </aside>
+
+        <main class="panel content">
+            <div class="content-head">
+                <h2>Tezkor Konspekt</h2>
+                <p>Fan nomini yoki tushunchani yozing. Bot darrov ixcham va to'liq javob beradi. Masalan: <strong>SI</strong>, <strong>Bayes formulasi</strong>, <strong>ODE</strong>.</p>
+            </div>
+
+            <div class="answer-stream" id="answerStream">
+                <div class="typing" id="typing">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                </div>
+            </div>
+
+            <div class="composer">
+                <div class="composer-box">
+                    <input type="text" id="input" placeholder="Savolingizni yozing..." autocomplete="off">
+                    <button class="send-btn" id="sendBtn" type="button" aria-label="Yuborish">
+                        <svg viewBox="0 0 24 24"><path d="M3.4 20.4 21 12 3.4 3.6 3.3 10l12 2-12 2z"/></svg>
+                    </button>
+                </div>
+            </div>
+        </main>
+
+        <aside class="panel quiz-panel">
+            <div class="quiz-head">
+                <h2>Test Paneli</h2>
+                <p>Fan tanlang, savolga variantlardan javob bosing. Test chat ichiga tushmaydi.</p>
+            </div>
+
+            <div class="quiz-body">
+                <div class="quiz-box" id="quizIntro">
+                    <div class="quiz-title">Test boshlanmagan</div>
+                    <p style="margin-top:10px; color: var(--muted); line-height: 1.6;">Chapdagi fan kartasidagi <strong>Test</strong> tugmasini bosing.</p>
+                </div>
+
+                <div class="quiz-box" id="quizBox" style="display:none;">
+                    <div class="quiz-meta">
+                        <span id="quizSubject">Fan</span>
+                        <span id="quizProgress">0/10</span>
+                    </div>
+                    <div class="quiz-question" id="quizQuestion"></div>
+                    <div class="option-list" id="optionList"></div>
+                </div>
+
+                <div class="feedback-box" id="feedbackBox" style="display:none;"></div>
+
+                <div class="quiz-controls" id="quizControls" style="display:none;">
+                    <button class="solid-btn" id="nextBtn" type="button">Keyingi savol</button>
+                    <button class="ghost-btn" id="stopBtn" type="button">Testni yopish</button>
+                </div>
+            </div>
+        </aside>
+    </div>
+
+    <script>
+        const input = document.getElementById('input');
+        const sendBtn = document.getElementById('sendBtn');
+        const answerStream = document.getElementById('answerStream');
+        const typing = document.getElementById('typing');
+        const statusBox = document.getElementById('statusBox');
+        const statusText = document.getElementById('statusText');
+        const subjectList = document.getElementById('subjectList');
+        const quizIntro = document.getElementById('quizIntro');
+        const quizBox = document.getElementById('quizBox');
+        const quizSubject = document.getElementById('quizSubject');
+        const quizProgress = document.getElementById('quizProgress');
+        const quizQuestion = document.getElementById('quizQuestion');
+        const optionList = document.getElementById('optionList');
+        const feedbackBox = document.getElementById('feedbackBox');
+        const quizControls = document.getElementById('quizControls');
+        const nextBtn = document.getElementById('nextBtn');
+        const stopBtn = document.getElementById('stopBtn');
+
+        const candidateBackends = window.location.protocol === 'file:'
+            ? [
+                'http://127.0.0.1:5000',
+                'http://localhost:5000'
+            ]
+            : window.location.port === '5000'
+                ? ['']
+                : [
+                    `${window.location.protocol}//${window.location.hostname}:5000`,
+                    `${window.location.protocol}//127.0.0.1:5000`,
+                    `${window.location.protocol}//localhost:5000`
+                ];
+
+        let backendBase = candidateBackends[0];
+
+        input.addEventListener('keypress', (event) => {
+            if (event.key === 'Enter') {
+                sendQuestion();
+            }
+        });
+
+        sendBtn.addEventListener('click', sendQuestion);
+        nextBtn.addEventListener('click', nextQuestion);
+        stopBtn.addEventListener('click', stopQuiz);
+
+        function scrollAnswers() {
+            answerStream.scrollTop = answerStream.scrollHeight;
+        }
+
+        function setStatus(online, text) {
+            statusText.textContent = text;
+            statusBox.classList.toggle('offline', !online);
+        }
+
+        function setTyping(show) {
+            typing.classList.toggle('active', show);
+            scrollAnswers();
+        }
+
+        function addAnswerEntry(question, answer) {
+            const entry = document.createElement('div');
+            entry.className = 'qa-entry';
+            entry.innerHTML = `
+                <div class="question-chip">${question}</div>
+                <div class="answer-card"></div>
+            `;
+            entry.querySelector('.answer-card').textContent = answer;
+            answerStream.insertBefore(entry, typing);
+            scrollAnswers();
+        }
+
+        function renderSubjectSection(title, subtitle, items, keyName) {
+            const existing = document.getElementById('subjectDetailSection');
+            if (existing) {
+                existing.remove();
+            }
+
+            const section = document.createElement('section');
+            section.className = 'info-section';
+            section.id = 'subjectDetailSection';
+
+            const heading = document.createElement('h3');
+            heading.textContent = title;
+
+            const intro = document.createElement('p');
+            intro.textContent = subtitle;
+
+            const list = document.createElement('div');
+            list.className = 'detail-list';
+
+            items.forEach((item) => {
+                const card = document.createElement('article');
+                card.className = 'detail-item';
+
+                const itemTitle = document.createElement('h4');
+                itemTitle.textContent = item[keyName];
+
+                const body = document.createElement('p');
+                body.textContent = item.answer;
+
+                card.appendChild(itemTitle);
+                card.appendChild(body);
+                list.appendChild(card);
+            });
+
+            section.appendChild(heading);
+            section.appendChild(intro);
+            section.appendChild(list);
+            answerStream.insertBefore(section, typing);
+            scrollAnswers();
+        }
+
+        function detectQuizIntent(text) {
+            const value = text.toLowerCase();
+            if (!value.includes('test') && !value.includes('quiz') && !value.includes('sinov')) {
+                return null;
+            }
+
+            if (value.includes('differensial')) return 'diff';
+            if (value.includes('ehtimollik') || value.includes('statistika')) return 'stats';
+            if (value.includes("sun'iy intellekt") || value.includes('suniy intellekt') || value === 'si test' || value.includes(' si') || value.startsWith('si ')) return 'si';
+            return null;
+        }
+
+        async function resolveBackend() {
+            for (const base of candidateBackends) {
+                try {
+                    const response = await fetch(`${base}/health`, {
+                        method: 'GET',
+                        credentials: 'include'
+                    });
+                    if (response.ok) {
+                        backendBase = base;
+                        setStatus(true, 'Backend ulandi');
+                        return true;
+                    }
+                } catch (error) {
+                    // Keyingi manzil tekshiriladi.
+                }
+            }
+
+            setStatus(false, 'Backend ulanmagan');
+            return false;
+        }
+
+        async function fetchJson(path, options = {}) {
+            const response = await fetch(`${backendBase}${path}`, {
+                credentials: 'include',
+                headers: { 'Content-Type': 'application/json' },
+                ...options
+            });
+
+            const data = await response.json();
+            if (!response.ok) {
+                throw new Error(data.message || `HTTP ${response.status}`);
+            }
+            return data;
+        }
+
+        function renderSubjects(subjects) {
+            subjectList.innerHTML = '';
+
+            subjects.forEach((subject) => {
+                const card = document.createElement('section');
+                card.className = 'subject-card';
+                card.innerHTML = `
+                    <h3>${subject.title}</h3>
+                    <p>${subject.intro}</p>
+                    <div class="subject-actions">
+                        <button class="solid-btn" type="button">Test</button>
+                        <button class="ghost-btn" type="button">Qisqa savol-javob</button>
+                        <button class="ghost-btn wide-btn" type="button">Atamalar</button>
+                    </div>
+                `;
+
+                const [testBtn, quickFaqBtn, termsBtn] = card.querySelectorAll('button');
+                testBtn.addEventListener('click', () => startQuiz(subject.key));
+                quickFaqBtn.addEventListener('click', () => {
+                    renderSubjectSection(
+                        `${subject.title}: qisqa savol-javob`,
+                        "Tez yodlab olish uchun eng kerakli savol-javoblar shu yerda ochildi.",
+                        subject.quick_faq || [],
+                        'question'
+                    );
+                });
+                termsBtn.addEventListener('click', () => {
+                    renderSubjectSection(
+                        `${subject.title}: asosiy atamalar`,
+                        "Shu fan bo'yicha muhim atamalar va qisqa izohlar alohida bo'limda ko'rsatildi.",
+                        subject.terms || [],
+                        'term'
+                    );
+                });
+                subjectList.appendChild(card);
+            });
+        }
+
+        function renderQuizState(data) {
+            if (!data.active) {
+                quizIntro.style.display = 'block';
+                quizBox.style.display = 'none';
+                quizControls.style.display = 'none';
+                if (data.message) {
+                    feedbackBox.style.display = 'block';
+                    feedbackBox.textContent = data.message;
+                } else {
+                    feedbackBox.style.display = 'none';
+                }
+                return;
+            }
+
+            quizIntro.style.display = 'none';
+            quizBox.style.display = 'block';
+            quizControls.style.display = 'flex';
+            quizSubject.textContent = data.subject_title;
+            quizProgress.textContent = `${data.index}/${data.total} | Ball: ${data.score}`;
+            quizQuestion.textContent = data.question;
+            optionList.innerHTML = '';
+
+            ['A', 'B', 'C', 'D'].forEach((key) => {
+                const button = document.createElement('button');
+                button.className = 'option-btn';
+                button.type = 'button';
+                button.textContent = `${key}) ${data.options[key]}`;
+                button.disabled = data.awaiting_next;
+                button.addEventListener('click', () => answerQuiz(key));
+                optionList.appendChild(button);
+            });
+
+            if (data.message || data.feedback || data.explanation) {
+                const parts = [data.message, data.feedback, data.explanation].filter(Boolean);
+                feedbackBox.style.display = 'block';
+                feedbackBox.textContent = parts.join('\n');
+            } else {
+                feedbackBox.style.display = 'none';
+            }
+        }
+
+        async function loadSubjects() {
+            const data = await fetchJson('/subjects', { method: 'GET' });
+            renderSubjects(data.subjects || []);
+        }
+
+        async function loadQuizState() {
+            const data = await fetchJson('/quiz/state', { method: 'GET' });
+            renderQuizState(data);
+        }
+
+        async function sendQuestion() {
+            const text = input.value.trim();
+            if (!text) {
+                return;
+            }
+
+            const quizSubjectKey = detectQuizIntent(text);
+            if (quizSubjectKey) {
+                input.value = '';
+                await startQuiz(quizSubjectKey);
+                return;
+            }
+
+            input.value = '';
+            input.disabled = true;
+            sendBtn.disabled = true;
+            setTyping(true);
+
+            try {
+                const ready = await resolveBackend();
+                if (!ready) {
+                    throw new Error('Backend topilmadi');
+                }
+
+                const data = await fetchJson('/chat', {
+                    method: 'POST',
+                    body: JSON.stringify({ message: text })
+                });
+
+                setTyping(false);
+                addAnswerEntry(text, data.reply || 'Javob olinmadi.');
+            } catch (error) {
+                setTyping(false);
+                addAnswerEntry(text, "Backend ishlamayapti. `python3 app.py` bilan ishga tushiring.");
+            } finally {
+                input.disabled = false;
+                sendBtn.disabled = false;
+                input.focus();
+            }
+        }
+
+        async function startQuiz(subject) {
+            try {
+                const ready = await resolveBackend();
+                if (!ready) {
+                    throw new Error('Backend topilmadi');
+                }
+
+                const data = await fetchJson('/quiz/start', {
+                    method: 'POST',
+                    body: JSON.stringify({ subject })
+                });
+                renderQuizState(data);
+            } catch (error) {
+                feedbackBox.style.display = 'block';
+                feedbackBox.textContent = error.message;
+            }
+        }
+
+        async function answerQuiz(answer) {
+            try {
+                const data = await fetchJson('/quiz/answer', {
+                    method: 'POST',
+                    body: JSON.stringify({ answer })
+                });
+                renderQuizState(data);
+            } catch (error) {
+                feedbackBox.style.display = 'block';
+                feedbackBox.textContent = error.message;
+            }
+        }
+
+        async function nextQuestion() {
+            try {
+                const data = await fetchJson('/quiz/next', {
+                    method: 'POST',
+                    body: JSON.stringify({})
+                });
+                renderQuizState(data);
+            } catch (error) {
+                feedbackBox.style.display = 'block';
+                feedbackBox.textContent = error.message;
+            }
+        }
+
+        async function stopQuiz() {
+            try {
+                const data = await fetchJson('/quiz/stop', {
+                    method: 'POST',
+                    body: JSON.stringify({})
+                });
+                renderQuizState(data);
+            } catch (error) {
+                feedbackBox.style.display = 'block';
+                feedbackBox.textContent = error.message;
+            }
+        }
+
+        async function boot() {
+            const ready = await resolveBackend();
+            if (!ready) {
+                feedbackBox.style.display = 'block';
+                feedbackBox.textContent = "Backend ulanmagan. `python3 app.py` ni ishga tushiring.";
+                return;
+            }
+
+            await loadSubjects();
+            await loadQuizState();
+        }
+
+        boot();
+    </script>
+</body>
+</html>
