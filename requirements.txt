@@ -1,4 +1,4 @@
 fastapi
 uvicorn
 sentence-transformers
-faiss-cpu==1.7.3
+faiss-cpu
